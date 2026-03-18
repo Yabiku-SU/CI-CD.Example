@@ -1,0 +1,60 @@
+# This file contains the fastlane.tools configuration
+# You can find the documentation at https://docs.fastlane.tools
+#
+# For a list of all available actions, check out
+#
+#     https://docs.fastlane.tools/actions
+#
+# For a list of all available plugins, check out
+#
+#     https://docs.fastlane.tools/plugins/available-plugins
+#
+
+# Uncomment the line if you want fastlane to automatically update itself
+# update_fastlane
+
+default_platform(:ios)
+
+platform :ios do
+
+  # ── Build ──────────────────────────────────
+  lane :build do
+    gym(
+      scheme: "CI-CD.Example",
+      configuration: "Debug",
+      skip_archive: true,
+      skip_codesigning: true,
+      derived_data_path: "~/Library/Developer/Xcode/DerivedData"
+    )
+  end
+
+  # ── Lint ────────────────────────────────
+  lane :lint do
+    swiftlint(
+      mode: :lint,
+      config_file: ".swiftlint.yml",
+      strict: false,
+      reporter: "github-actions-logging"
+    )
+  end
+  
+  # ── Slack ─────────────────────────────────
+  lane :notify_slack do |options|
+    slack(
+      message: options[:message],
+      success: options[:success],
+      slack_url: ENV["SLACK_WEBHOOK_URL"],
+      default_payloads: [],
+      attachment_properties: {
+        fields: [
+          { title: "Status",  value: options[:success] ? "✅ Success" : "❌ Failure", short: true },
+          { title: "Branch",   value: ENV["BRANCH"],   short: true },
+          { title: "Commit",  value: ENV["COMMIT_MSG"], short: false },
+          { title: "Author",   value: ENV["AUTHOR"],   short: true },
+          { title: "Details",  value: ENV["RUN_URL"],  short: false }
+        ]
+      }
+    )
+  end
+
+end

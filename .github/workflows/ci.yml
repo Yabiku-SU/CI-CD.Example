@@ -1,0 +1,125 @@
+name: iOS CI
+
+on:
+  push:
+    branches: [main]
+    
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  XCODE_VERSION: latest-stable
+  RUBY_VERSION: '3.3'
+
+jobs:
+  # ─────────────────────────────────────────
+  # JOB 1: Build + Cache
+  # ─────────────────────────────────────────
+  build:
+    name: 🔨 Build
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        uses: maxim-lobanov/setup-xcode@v1
+        id: setup-xcode
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Cache DerivedData
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-derived-data-${{ hashFiles('**/*.xcodeproj/project.pbxproj') }}
+          restore-keys: |
+            ${{ runner.os }}-derived-data-
+
+      - name: Build
+        run: bundle exec fastlane build
+
+  # ─────────────────────────────────────────
+  # JOB 2: Lint
+  # ─────────────────────────────────────────
+  lint:
+    name: 🔍 Lint
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        uses: maxim-lobanov/setup-xcode@v1
+        id: setup-xcode
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+
+      - name: Cache SwiftLint
+        id: cache-swiftlint
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/swiftlint
+          key: swiftlint-0.63.2
+
+      - name: Install SwiftLint (No Cache)
+        if: steps.cache-swiftlint.outputs.cache-hit != 'true'
+        run: |
+          curl -Lo /tmp/SwiftLint.pkg \
+          https://github.com/realm/SwiftLint/releases/download/0.63.2/SwiftLint.pkg
+          sudo installer -pkg /tmp/SwiftLint.pkg -target /
+
+      - name: Run SwiftLint
+        run: bundle exec fastlane lint
+        
+        
+    # ── Notification ──
+  notify:
+    name: 📬 Notify
+    runs-on: macos-15
+    needs: [build, lint]
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+
+      - name: Send notifications
+        env:
+          SLACK_WEBHOOK_URL:    ${{ secrets.SLACK_WEBHOOK_URL }}
+
+          BRANCH:     ${{ github.ref_name }}
+          AUTHOR:     ${{ github.actor }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL:    ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CI_SUCCESS: ${{ !contains(needs.*.result, 'failure') }}
+        run: bundle exec fastlane notify_slack success:${{ env.CI_SUCCESS }}
